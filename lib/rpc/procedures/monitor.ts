@@ -21,6 +21,12 @@ const HostMetricsSchema = z
     gpu_power_limit_w: z.string().optional(),
     sparkrun_jobs: z.string().optional(),
     sparkrun_job_names: z.string().optional(),
+    // sparkrun emits this on hosts whose metric collection failed (e.g.
+    // SSH auth refused). Surfacing it to the dashboard lets the user
+    // see *why* every number is zero, instead of silently rendering an
+    // aggregate over no data (issue #122). When set, every metric field
+    // above will be absent for the same host.
+    error: z.string().optional(),
   })
   .loose();
 
@@ -44,8 +50,17 @@ export const stream = os
     const args = ["cluster", "monitor", "--json", "--interval", String(input?.intervalSec ?? 2)];
     if (input?.cluster) args.push("--cluster", input.cluster);
     else if (input?.hosts?.length) args.push("--hosts", input.hosts.join(","));
+    // Log the first error per host so the server log records WHY the
+    // dashboard shows zeros, even when the browser console isn't open.
+    const loggedErrors = new Set<string>();
     for await (const obj of streamSparkrunNdjson<z.infer<typeof TickSchema>>(args, { signal })) {
       if (signal?.aborted) break;
+      for (const [host, m] of Object.entries(obj.hosts)) {
+        if (typeof m.error === "string" && m.error.length > 0 && !loggedErrors.has(host)) {
+          loggedErrors.add(host);
+          console.error(`[monitor.stream] ${host}: ${m.error}`);
+        }
+      }
       yield obj;
     }
   });
