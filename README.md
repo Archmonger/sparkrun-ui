@@ -63,7 +63,10 @@ version you have on the host — no drift, no extra version to keep updated.
 ### Prerequisites
 
 - Sparkrun installed on the host: `uv tool install sparkrun`
-- Host Python is **3.12** — see [troubleshooting](CONTRIBUTING.md#python-version-mismatch) if not.
+- For the `npx sparkrun-ui` path only: host Python must be **3.12** (the
+  precompiled Next.js bundle targets the same interpreter version). The
+  Docker image bundles its own Python 3.12 and is unaffected by the host's
+  Python version.
 - An SSH key that can reach every host in your cluster.
 - A saved sparkrun cluster definition: `sparkrun cluster create <name> --hosts <ip1>,<ip2>`.
 - Docker installed on every cluster host (not the UI host).
@@ -75,42 +78,59 @@ docker run -d --name sparkrun-ui \
   --restart unless-stopped \
   --network host \
   -e HOST_USER=$USER \
-  -e PATH="/usr/bin/sparkrun:/home/$USER/.local/share/uv/tools/sparkrun/bin:$PATH" \
+  -e HF_TOKEN=${HF_TOKEN:-} \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $HOME/.local/bin/sparkrun:/usr/bin/sparkrun:ro \
-  -v $HOME/.local/share/uv:/home/$USER/.local/share/uv:ro \
+  -v $HOME/.local/bin/sparkrun:/usr/local/bin/sparkrun:ro \
+  -v $HOME/.local/share/uv/tools/sparkrun:$HOME/.local/share/uv/tools/sparkrun:ro \
   -v $HOME/.ssh:/home/app/.ssh:ro \
   -v $HOME/.config/sparkrun:/home/app/.config/sparkrun \
   -v $HOME/.cache/sparkrun:/home/app/.cache/sparkrun \
+  -v $HOME/.cache/huggingface:/home/app/.cache/huggingface \
   ghcr.io/mcampa/sparkrun-ui:latest
 ```
 
 Open <http://localhost:5678>. `--network host` is required when your cluster
-references `127.0.0.1`. `HOST_USER` tells sparkrun which user to SSH as when
-it monitors the cluster — without it, monitoring SSHs in as the in-container
-`app` user and every metric comes back empty. See
+references `127.0.0.1`. `HOST_USER` tells sparkrun which host user to use
+when SSHing to non-loopback hosts — for a single-DGX cluster with only
+`127.0.0.1`, the entrypoint detects the bind-mounted docker socket and
+skips SSH entirely (sparkrun uses local `docker exec`). See
 [mount reference](CONTRIBUTING.md#docker-volume-mounts) for what each volume
 does.
+
+> **Note on the sparkrun shim mount path.** The README previously mounted
+> the shim at `/usr/bin/sparkrun`. The shipped image's entrypoint installs
+> a wrapper at `/usr/local/sbin/sparkrun` that shadows the bind-mounted
+> shim regardless of where you mount it (`/usr/bin` or `/usr/local/bin`
+> both work). We use `/usr/local/bin` here to match the bundled
+> `docker-compose.yml`.
 
 ### Multi-host / remote cluster
 
 If your cluster uses LAN IPs (e.g. `192.168.0.40, 192.168.0.41`), drop
-`--network host` and publish port 5678:
+`--network host` and publish port 5678. The `docker.sock` and HF cache
+mounts are no longer required when the cluster has no loopback hosts
+(and the entrypoint will not try to use them), but they remain harmless:
 
 ```bash
 docker run -d --name sparkrun-ui \
   --restart unless-stopped \
   -p 5678:5678 \
   -e HOST_USER=$USER \
-  -e PATH="/usr/bin/sparkrun:/home/$USER/.local/share/uv/tools/sparkrun/bin:$PATH" \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $HOME/.local/bin/sparkrun:/usr/bin/sparkrun:ro \
-  -v $HOME/.local/share/uv:/home/$USER/.local/share/uv:ro \
+  -e HF_TOKEN=${HF_TOKEN:-} \
+  -v $HOME/.local/bin/sparkrun:/usr/local/bin/sparkrun:ro \
+  -v $HOME/.local/share/uv/tools/sparkrun:$HOME/.local/share/uv/tools/sparkrun:ro \
   -v $HOME/.ssh:/home/app/.ssh:ro \
   -v $HOME/.config/sparkrun:/home/app/.config/sparkrun \
   -v $HOME/.cache/sparkrun:/home/app/.cache/sparkrun \
+  -v $HOME/.cache/huggingface:/home/app/.cache/huggingface \
   ghcr.io/mcampa/sparkrun-ui:latest
 ```
+
+For multi-host clusters, `HOST_USER` is mandatory: the entrypoint only
+sets `USER=$HOST_USER` for the loopback auto-detection path when the
+docker socket is bound. Without `HOST_USER` set, non-loopback hosts are
+monitored via SSH as the in-container `app` user, which won't authenticate
+against the cluster.
 
 ### docker compose
 
