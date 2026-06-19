@@ -136,4 +136,39 @@ APP_PROFILE=/etc/profile.d/sparkrun-ui.sh
 } > "$APP_PROFILE"
 chmod 0644 "$APP_PROFILE"
 
+# Auto-detect loopback / local docker-exec mode.
+#
+# Sparkrun decides whether to SSH to a host or run locally via
+# should_run_locally(host, ssh_user), which returns True when:
+#   * the host resolves to a local address (127.0.0.1, localhost,
+#     the containers own IP, etc.) AND
+#   * ssh_user is None OR ssh_user == $USER
+#
+# Inside the container $USER is empty (the `app` user was created
+# without a login shell), so os.environ.get("USER", "root") in
+# sparkrun returns "root". If we set ssh.user to the host user
+# (the standard fix for remote hosts), then ssh_user ("mark")
+# does NOT match $USER ("root"), so should_run_locally() returns
+# False and sparkrun SSHes even for 127.0.0.1.
+#
+# When the docker socket is bind-mounted (the standard compose
+# setup for single-host clusters), the in-container `app` user IS
+# effectively running on the host: we have direct docker access,
+# so there is nothing to gain from SSHing to ourselves. In that
+# case we export USER=$HOST_USER so
+# should_run_locally("127.0.0.1", "mark") returns True and
+# sparkrun uses local docker exec. For non-loopback hosts
+# sparkrun still uses SSH (the explicit ssh_user triggers the
+# SSH path regardless of $USER), so multi-host clusters are
+# unaffected.
+#
+# If /var/run/docker.sock is NOT bind-mounted (multi-host setup
+# without docker access, e.g. the user commented out that volume
+# in docker-compose.yml), leave USER alone so sparkrun falls back
+# to SSH for everything. That matches the pre-fix behavior on
+# those setups.
+if [ -S /var/run/docker.sock ] && [ -n "${HOST_USER}" ] && [ "${HOST_USER}" != "app" ]; then
+  export USER="${HOST_USER}"
+fi
+
 exec gosu app "$@"
