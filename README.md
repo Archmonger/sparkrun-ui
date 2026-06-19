@@ -106,6 +106,7 @@ docker run -d --name sparkrun-ui \
   -p 5678:5678 \
   -e HOST_USER=$USER \
   -e HF_TOKEN=${HF_TOKEN:-} \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -v $HOME/.local/bin/sparkrun:/usr/local/bin/sparkrun:ro \
   -v $HOME/.local/share/uv/tools/sparkrun:$HOME/.local/share/uv/tools/sparkrun:ro \
   -v $HOME/.ssh:/home/app/.ssh:ro \
